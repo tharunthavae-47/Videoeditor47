@@ -36,7 +36,7 @@ async function scoreClip(clip:Clip, style:string):Promise<Highlight[]>{
   }
   v.remove();
   const highlights:Highlight[]=[];
-  const window=Math.min(4.5,Math.max(2,clip.duration*.22));
+  const segmentWindow=Math.min(4.5,Math.max(2,clip.duration*.22));
   for(let i=0;i<frames.length;i++){
     const f=frames[i];
     const motion=f.change;
