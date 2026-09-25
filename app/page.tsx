@@ -27,7 +27,7 @@ async function scoreClip(clip:Clip, style:string):Promise<Highlight[]>{
   const frames:{t:number;energy:number;change:number}[]=[]; let prev:Uint8ClampedArray|null=null;
   for(let i=0;i<count;i++){
     const t=(clip.duration<1?0:(i/(count-1))*Math.max(0,clip.duration-.25));
-    v.currentTime=t; await new Promise<void>(r=>{v.onseeked=()=>r()});
+    v.currentTime=t; await new Promise<void>((res,rej)=>{const timer=window.setTimeout(()=>rej(new Error("Frame konnte nicht gelesen werden.")),5000);v.onseeked=()=>{clearTimeout(timer);res()};});
     ctx.drawImage(v,0,0,48,27); const data=ctx.getImageData(0,0,48,27).data;
     let brightness=0,diff=0;
     for(let p=0;p<data.length;p+=4){brightness+=(data[p]+data[p+1]+data[p+2])/3;if(prev)diff+=Math.abs(data[p]-prev[p])+Math.abs(data[p+1]-prev[p+1])+Math.abs(data[p+2]-prev[p+2])}
