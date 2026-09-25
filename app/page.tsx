@@ -38,10 +38,7 @@ async function scoreClip(clip:Clip, style:string):Promise<Highlight[]>{
   const highlights:Highlight[]=[];
   const segmentWindow=Math.min(4.5,Math.max(2,clip.duration*.22));
   for(let i=0;i<frames.length;i++){
-    const f=frames[i];
-    const motion=f.change;
-    const bright=1-Math.abs(f.energy-.58);
-    let styleBonus=0;
+    const f=frames[i]; const motion=f.change; const bright=1-Math.abs(f.energy-.58); let styleBonus=0;
     if(style==="Relaxed"||style==="Emotional")styleBonus=(1-motion)*.22;
     if(style==="Action"||style==="Fast Cut")styleBonus=motion*.3;
     if(style==="Funny"||style==="Party")styleBonus=Math.min(1,motion*1.5)*.18;
@@ -57,43 +54,20 @@ async function analyzeWithGemini(clip:Clip, style:string, attempt=1):Promise<Hig
   const v=document.createElement("video");
   v.src=clip.url; v.muted=true; v.playsInline=true; v.preload="metadata";
   try{
-    await new Promise<void>((res,rej)=>{
-      const timer=window.setTimeout(()=>rej(new Error("Videoanalyse Timeout")),12000);
-      v.onloadeddata=()=>{clearTimeout(timer);res()};
-      v.onerror=()=>{clearTimeout(timer);rej(new Error("Video konnte für die KI-Analyse nicht geladen werden."))};
-    });
+    await new Promise<void>((res,rej)=>{const timer=window.setTimeout(()=>rej(new Error("Videoanalyse Timeout")),12000);v.onloadeddata=()=>{clearTimeout(timer);res()};v.onerror=()=>{clearTimeout(timer);rej(new Error("Video konnte für die KI-Analyse nicht geladen werden."))}});
     const canvas=document.createElement("canvas"); canvas.width=240; canvas.height=135;
     const ctx=canvas.getContext("2d"); if(!ctx)throw new Error("KI-Bildanalyse nicht verfügbar.");
-    const count=Math.max(5,Math.min(8,Math.ceil(clip.duration/3)));
-    const frames:{time:number;data:string}[]=[];
+    const count=Math.max(5,Math.min(8,Math.ceil(clip.duration/3))); const frames:{time:number;data:string}[]=[];
     for(let i=0;i<count;i++){
-      const t=clip.duration<1?0:(i/(count-1))*Math.max(0,clip.duration-.2);
-      v.currentTime=t;
-      await new Promise<void>((res,rej)=>{
-        const timer=window.setTimeout(()=>rej(new Error("Frame Timeout")),5000);
-        v.onseeked=()=>{clearTimeout(timer);res()};
-      });
-      ctx.drawImage(v,0,0,canvas.width,canvas.height);
-      frames.push({time:t,data:canvas.toDataURL("image/jpeg",.5).split(",")[1]});
+      const t=clip.duration<1?0:(i/(count-1))*Math.max(0,clip.duration-.2); v.currentTime=t;
+      await new Promise<void>((res,rej)=>{const timer=window.setTimeout(()=>rej(new Error("Frame Timeout")),5000);v.onseeked=()=>{clearTimeout(timer);res()}});
+      ctx.drawImage(v,0,0,canvas.width,canvas.height); frames.push({time:t,data:canvas.toDataURL("image/jpeg",.5).split(",")[1]});
     }
-    const response=await fetch("/api/ai-analyze",{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({style,duration:clip.duration,frames})
-    });
-    const body=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(body?.error||"Gemini API Fehler.");
-    const highlights=Array.isArray(body.highlights)?body.highlights:[];
-    return highlights.map((h:{start?:number;duration?:number;score?:number})=>{
-      const dur=Math.min(4.5,Math.max(2,Number(h.duration)||3));
-      const maxStart=Math.max(0,clip.duration-dur);
-      return {clip,start:Math.max(0,Math.min(maxStart,Number(h.start)||0)),dur,score:Math.max(0,Math.min(1,Number(h.score)||0))};
-    });
-  }catch(err){
-    if(attempt<2){await wait(700);return analyzeWithGemini(clip,style,attempt+1)}
-    throw err;
-  }finally{
-    v.pause();v.removeAttribute("src");v.load();v.remove();
-  }
+    const response=await fetch("/api/ai-analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({style,duration:clip.duration,frames})});
+    const body=await response.json().catch(()=>({})); if(!response.ok)throw new Error(body?.error||"Gemini API Fehler.");
+    const highlights=Array.isArray(body.highlights)?body.highlights:[]; return highlights.map((h:{start?:number;duration?:number;score?:number})=>{const dur=Math.min(4.5,Math.max(2,Number(h.duration)||3));const maxStart=Math.max(0,clip.duration-dur);return {clip,start:Math.max(0,Math.min(maxStart,Number(h.start)||0)),dur,score:Math.max(0,Math.min(1,Number(h.score)||0))}});
+  }catch(err){if(attempt<2){await wait(700);return analyzeWithGemini(clip,style,attempt+1)}throw err}
+  finally{v.pause();v.removeAttribute("src");v.load();v.remove()}
 }
 
 export default function Home(){
@@ -118,33 +92,13 @@ export default function Home(){
   if(!clips.length||busy)return; setBusy(true);setResult(null);setProgress(0);
   try{
    const target=Math.min(length*60,total); if(target<=0)throw new Error("Keine abspielbaren Videos.");
-   setAnalysis(aiEnabled?"1/4 · Gemini analysiert die wichtigsten Momente …":"1/4 · Szenen werden lokal analysiert …");
-   setAiStatus("");
-   const all:Highlight[]=[];
-   const batchSize=Math.min(3,Math.max(1,clips.length));
-   let analyzed=0;
+   setAnalysis(aiEnabled?"1/4 · Gemini analysiert die wichtigsten Momente …":"1/4 · Szenen werden lokal analysiert …"); setAiStatus("");
+   const all:Highlight[]=[]; const batchSize=Math.min(3,Math.max(1,clips.length)); let analyzed=0;
    for(let batchStart=0;batchStart<clips.length;batchStart+=batchSize){
      const batch=clips.slice(batchStart,batchStart+batchSize);
-     const results=await Promise.all(batch.map(async clip=>{
-       try{
-         if(aiEnabled){
-           const found=await analyzeWithGemini(clip,style);
-           return {found,mode:"Gemini"};
-         }
-         return {found:await scoreClip(clip,style),mode:"Lokal"};
-       }catch{
-         try{return {found:await scoreClip(clip,style),mode:"Fallback"}}
-         catch{return {found:[] as Highlight[],mode:"Übersprungen"}}
-       }
-     }));
-     results.forEach((r,i)=>{
-       all.push(...r.found);
-       analyzed++;
-       const mode=r.mode==="Gemini"?"🤖 Gemini":r.mode==="Fallback"?"🛟 lokaler Fallback":r.mode==="Lokal"?"📱 lokal":"⚠️ übersprungen";
-       setAiStatus(mode+" · Video "+analyzed+" von "+clips.length);
-       setProgress(Math.round((analyzed/clips.length)*25));
-     });
-     if(batchStart+batchSize<clips.length) await wait(150);
+     const results=await Promise.all(batch.map(async clip=>{try{if(aiEnabled){const found=await analyzeWithGemini(clip,style);return {found,mode:"Gemini"}}return {found:await scoreClip(clip,style),mode:"Lokal"} }catch{try{return {found:await scoreClip(clip,style),mode:"Fallback"}}catch{return {found:[] as Highlight[],mode:"Übersprungen"}}}}));
+     results.forEach((r)=>{all.push(...r.found);analyzed++;const mode=r.mode==="Gemini"?"🤖 Gemini":r.mode==="Fallback"?"🛟 lokaler Fallback":r.mode==="Lokal"?"📱 lokal":"⚠️ übersprungen";setAiStatus(mode+" · Video "+analyzed+" von "+clips.length);setProgress(Math.round((analyzed/clips.length)*25))});
+     if(batchStart+batchSize<clips.length)await wait(150);
    }
    if(!all.length)throw new Error("Es konnten keine Highlights gefunden werden.");
    all.sort((a,b)=>b.score-a.score); const chosen:Highlight[]=[]; let remaining=target;
@@ -152,14 +106,25 @@ export default function Home(){
    if(remaining>0){for(const c of clips){if(remaining<=0)break;const dur=Math.min(remaining,Math.min(3,c.duration));chosen.push({clip:c,start:Math.max(0,(c.duration-dur)/2),dur,score:0});remaining-=dur}}
    if(!chosen.length)throw new Error("Keine Highlights gefunden.");
    setAnalysis("2/4 · Schnitt, Reihenfolge und Übergänge werden geplant …");setProgress(35);
-   const vertical=ratio==="9:16",wide=ratio==="16:9";const W=vertical?720:wide?1280:1080,H=vertical?1280:wide?720:1080;
+   const vertical=ratio==="9:16",wide=ratio==="16:9"; const W=vertical?720:wide?1280:1080,H=vertical?1280:wide?720:1080;
    const canvas=document.createElement("canvas");canvas.width=W;canvas.height=H;const ctx=canvas.getContext("2d");if(!ctx)throw new Error("Canvas nicht verfügbar.");
-   const videoStream=canvas.captureStream(30);\n   // Capture the original video audio as well as the rendered canvas.\n   const AudioContextClass=window.AudioContext||(window as typeof window & {webkitAudioContext?:typeof AudioContext}).webkitAudioContext;\n   const audioContext=AudioContextClass?new AudioContextClass():null;\n   const audioDestination=audioContext?.createMediaStreamDestination()??null;\n   if(audioContext?.state==="suspended")await audioContext.resume();\n   const stream=new MediaStream([...videoStream.getVideoTracks(),...(audioDestination?.stream.getAudioTracks()??[])]);\n   let recorder:MediaRecorder;const chunks:Blob[]=[];try{recorder=new MediaRecorder(stream,{mimeType:"video/webm;codecs=vp9,opus"})}catch{try{recorder=new MediaRecorder(stream,{mimeType:"video/webm"})}catch{recorder=new MediaRecorder(stream)}}
-   recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};const finished=new Promise<void>((resolve,reject)=>{recorder.onstop=()=>resolve();recorder.onerror=()=>reject(new Error("Aufnahme fehlgeschlagen"))});
+   const videoStream=canvas.captureStream(30);
+   // Capture the original video audio as well as the rendered canvas.
+   const AudioContextClass=window.AudioContext||(window as typeof window & {webkitAudioContext?:typeof AudioContext}).webkitAudioContext;
+   const audioContext=AudioContextClass?new AudioContextClass():null;
+   const audioDestination=audioContext?.createMediaStreamDestination()??null;
+   if(audioContext?.state==="suspended")await audioContext.resume();
+   const stream=new MediaStream([...videoStream.getVideoTracks(),...(audioDestination?.stream.getAudioTracks()??[])]);
+   let recorder:MediaRecorder;const chunks:Blob[]=[];
+   try{recorder=new MediaRecorder(stream,{mimeType:"video/webm;codecs=vp9,opus"})}catch{try{recorder=new MediaRecorder(stream,{mimeType:"video/webm"})}catch{recorder=new MediaRecorder(stream)}}
+   recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+   const finished=new Promise<void>((resolve,reject)=>{recorder.onstop=()=>resolve();recorder.onerror=()=>reject(new Error("Aufnahme fehlgeschlagen"))});
    recorder.start(250);let doneTime=0;const lastFrame=document.createElement("canvas");lastFrame.width=W;lastFrame.height=H;const lastCtx=lastFrame.getContext("2d");let previous:Highlight|null=null;
    setAnalysis("3/4 · Profi-Look wird gerendert …");
    for(let si=0;si<chosen.length;si++){
-    const seg=chosen[si],v=document.createElement("video");v.src=seg.clip.url;v.muted=false;v.playsInline=true;v.preload="auto";\n    const audioSource=audioContext&&audioDestination?audioContext.createMediaElementSource(v):null;\n    if(audioSource&&audioDestination)audioSource.connect(audioDestination);
+    const seg=chosen[si],v=document.createElement("video");v.src=seg.clip.url;v.muted=false;v.playsInline=true;v.preload="auto";
+    const audioSource=audioContext&&audioDestination?audioContext.createMediaElementSource(v):null;
+    if(audioSource&&audioDestination)audioSource.connect(audioDestination);
     await new Promise<void>((res,rej)=>{v.onloadeddata=()=>res();v.onerror=()=>rej(new Error("Video konnte nicht geladen werden."))});
     await v.play();v.currentTime=seg.start;const start=performance.now();const transition=previous?transitionFor(style,seg.score):"cut";const transMs=transition==="cut"?0:Math.min(650,seg.dur*280);
     while(performance.now()-start<seg.dur*1000){
@@ -172,14 +137,14 @@ export default function Home(){
        filterStyle(ctx,W,H);
        const edgeFade=Math.min(1,Math.min(elapsed/240,(seg.dur*1000-elapsed)/240));ctx.fillStyle="rgba(0,0,0,"+(1-Math.max(0,edgeFade))*.25+")";ctx.fillRect(0,0,W,H);
        if(style==="Fast Cut"){ctx.fillStyle="#fff";ctx.font="700 22px Arial";ctx.fillText("VIDEOEDITOR47",24,H-30)}
-      } doneTime+=16;setProgress(35+Math.min(60,Math.round(doneTime/(target*1000)*60)));await new Promise(r=>setTimeout(r,16));
+      }
+      doneTime+=16;setProgress(35+Math.min(60,Math.round(doneTime/(target*1000)*60)));await new Promise(r=>setTimeout(r,16));
     }
     if(lastCtx)lastCtx.drawImage(canvas,0,0);previous=seg;v.pause();audioSource?.disconnect();v.remove();
    }
    setAnalysis("4/4 · Titel und Outro werden eingebaut …");setProgress(96);
-   // Add a short title card at the end so every export has a polished ending.
-   const endV=document.createElement("video");endV.muted=true;endV.playsInline=true;
-   const titleFrames=Math.round(30*1.8);for(let i=0;i<titleFrames;i++){ctx.fillStyle="#090b10";ctx.fillRect(0,0,W,H);const p=Math.min(1,i/12,(titleFrames-i)/12);ctx.globalAlpha=p;ctx.fillStyle="#fff";ctx.textAlign="center";ctx.font="700 "+Math.round(Math.min(W,H)*.075)+"px Arial";ctx.fillText(title||"BEST MOMENTS",W/2,H*.47);ctx.font="400 "+Math.round(Math.min(W,H)*.028)+"px Arial";ctx.fillText(subtitle||"Videoeditor47",W/2,H*.55);ctx.globalAlpha=1;ctx.textAlign="left";await new Promise(r=>setTimeout(r,33))}
+   const titleFrames=Math.round(30*1.8);
+   for(let i=0;i<titleFrames;i++){ctx.fillStyle="#090b10";ctx.fillRect(0,0,W,H);const p=Math.min(1,i/12,(titleFrames-i)/12);ctx.globalAlpha=p;ctx.fillStyle="#fff";ctx.textAlign="center";ctx.font="700 "+Math.round(Math.min(W,H)*.075)+"px Arial";ctx.fillText(title||"BEST MOMENTS",W/2,H*.47);ctx.font="400 "+Math.round(Math.min(W,H)*.028)+"px Arial";ctx.fillText(subtitle||"Videoeditor47",W/2,H*.55);ctx.globalAlpha=1;ctx.textAlign="left";await new Promise(r=>setTimeout(r,33))}
    recorder.stop();await finished;stream.getTracks().forEach(t=>t.stop());videoStream.getTracks().forEach(t=>t.stop());if(audioContext)await audioContext.close();setAnalysis("Fertig! Dein automatischer Edit ist bereit.");setProgress(100);setResult(URL.createObjectURL(new Blob(chunks,{type:"video/webm"})));
   }catch(err){alert(err instanceof Error?err.message:"Recap fehlgeschlagen.");}finally{setBusy(false)}
  }
@@ -195,8 +160,7 @@ export default function Home(){
   <section className="section"><h2>Automatischer Look</h2><div className="chips">{["Auto","Warm","Cool","Vivid","Noir"].map(x=><button className={"chip "+(filter===x?"active":"")} key={x} onClick={()=>setFilter(x)}>{x}</button>)}</div></section>
   <section className="section"><h2>Titel</h2><input className="textInput" value={title} onChange={e=>setTitle(e.target.value)} placeholder="BEST MOMENTS"/><input className="textInput" value={subtitle} onChange={e=>setSubtitle(e.target.value)} placeholder="Videoeditor47 · 2026"/></section>
   <section className="section"><h2>Format</h2><div className="chips">{["9:16","16:9","1:1"].map(x=><button className={"chip "+(ratio===x?"active":"")} key={x} onClick={()=>setRatio(x)}>{x}</button>)}</div></section>
-  <section className="section"><h2>Automatisch bearbeiten</h2><p className="small">Gemini analysiert die Videos in kleinen Gruppen. Bei Fehlern wird automatisch lokal weiteranalysiert, damit einzelne Videos den gesamten Recap nicht stoppen.</p><button className="mainBtn" disabled={!clips.length||busy} onClick={render}>{busy?"✨ Dein Edit wird erstellt …":"✨ Automatischen CapCut-Style Edit erstellen"}</button>{busy&&<><p className="small">{analysis}</p>{aiStatus&&<p className="small">{aiStatus}</p>}<div className="progress"><i style={{width:progress+"%"}}/></div></>}
-  </section>
+  <section className="section"><h2>Automatisch bearbeiten</h2><p className="small">Gemini analysiert die Videos in kleinen Gruppen. Bei Fehlern wird automatisch lokal weiteranalysiert, damit einzelne Videos den gesamten Recap nicht stoppen.</p><button className="mainBtn" disabled={!clips.length||busy} onClick={render}>{busy?"✨ Dein Edit wird erstellt …":"✨ Automatischen CapCut-Style Edit erstellen"}</button>{busy&&<><p className="small">{analysis}</p>{aiStatus&&<p className="small">{aiStatus}</p>}<div className="progress"><i style={{width:progress+"%"}}/></div></>}</section>
   {result&&<section className="section result"><h2>Fertiger Edit 🎉</h2><video controls playsInline src={result}/><a className="download" href={result} download={"Videoeditor47-Edit.webm"}>⬇️ Fertiges Video speichern</a><p className="small">Schnitt und Rendering laufen auf deinem Handy. Der Originalton der ausgewählten Videoclips wird mitgespeichert.</p></section>}
   <div className="footer">Videoeditor47 · kein Login · kein Supabase · keine monatlichen Gebühren</div>
  </main>
