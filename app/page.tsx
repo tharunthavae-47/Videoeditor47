@@ -51,38 +51,49 @@ async function scoreClip(clip:Clip, style:string):Promise<Highlight[]>{
   return highlights.sort((a,b)=>b.score-a.score).slice(0,Math.min(3,highlights.length));
 }
 
-async function analyzeWithGemini(clip:Clip, style:string):Promise<Highlight[]>{
+async function wait(ms:number){await new Promise(r=>setTimeout(r,ms))}
+
+async function analyzeWithGemini(clip:Clip, style:string, attempt=1):Promise<Highlight[]>{
   const v=document.createElement("video");
-  v.src=clip.url; v.muted=true; v.playsInline=true; v.preload="auto";
-  await new Promise<void>((res,rej)=>{v.onloadeddata=()=>res();v.onerror=()=>rej(new Error("Video konnte für die KI-Analyse nicht geladen werden."))});
-  const canvas=document.createElement("canvas"); canvas.width=320; canvas.height=180;
-  const ctx=canvas.getContext("2d"); if(!ctx)throw new Error("KI-Bildanalyse nicht verfügbar.");
-  const count=Math.max(6,Math.min(12,Math.ceil(clip.duration/2)));
-  const frames:{time:number;data:string}[]=[];
-  for(let i=0;i<count;i++){
-    const t=clip.duration<1?0:(i/(count-1))*Math.max(0,clip.duration-.15);
-    v.currentTime=t;
-    await new Promise<void>(r=>{v.onseeked=()=>r()});
-    ctx.drawImage(v,0,0,canvas.width,canvas.height);
-    frames.push({time:t,data:canvas.toDataURL("image/jpeg",.62).split(",")[1]});
-  }
-  v.remove();
-  const response=await fetch("/api/ai-analyze",{
-    method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({style,duration:clip.duration,frames})
-  });
-  if(!response.ok){
+  v.src=clip.url; v.muted=true; v.playsInline=true; v.preload="metadata";
+  try{
+    await new Promise<void>((res,rej)=>{
+      const timer=window.setTimeout(()=>rej(new Error("Videoanalyse Timeout")),12000);
+      v.onloadeddata=()=>{clearTimeout(timer);res()};
+      v.onerror=()=>{clearTimeout(timer);rej(new Error("Video konnte für die KI-Analyse nicht geladen werden."))};
+    });
+    const canvas=document.createElement("canvas"); canvas.width=240; canvas.height=135;
+    const ctx=canvas.getContext("2d"); if(!ctx)throw new Error("KI-Bildanalyse nicht verfügbar.");
+    const count=Math.max(5,Math.min(8,Math.ceil(clip.duration/3)));
+    const frames:{time:number;data:string}[]=[];
+    for(let i=0;i<count;i++){
+      const t=clip.duration<1?0:(i/(count-1))*Math.max(0,clip.duration-.2);
+      v.currentTime=t;
+      await new Promise<void>((res,rej)=>{
+        const timer=window.setTimeout(()=>rej(new Error("Frame Timeout")),5000);
+        v.onseeked=()=>{clearTimeout(timer);res()};
+      });
+      ctx.drawImage(v,0,0,canvas.width,canvas.height);
+      frames.push({time:t,data:canvas.toDataURL("image/jpeg",.5).split(",")[1]});
+    }
+    const response=await fetch("/api/ai-analyze",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({style,duration:clip.duration,frames})
+    });
     const body=await response.json().catch(()=>({}));
-    throw new Error(body?.error||"Gemini-KI-Analyse fehlgeschlagen.");
+    if(!response.ok)throw new Error(body?.error||"Gemini API Fehler.");
+    const highlights=Array.isArray(body.highlights)?body.highlights:[];
+    return highlights.map((h:{start?:number;duration?:number;score?:number})=>{
+      const dur=Math.min(4.5,Math.max(2,Number(h.duration)||3));
+      const maxStart=Math.max(0,clip.duration-dur);
+      return {clip,start:Math.max(0,Math.min(maxStart,Number(h.start)||0)),dur,score:Math.max(0,Math.min(1,Number(h.score)||0))};
+    });
+  }catch(err){
+    if(attempt<2){await wait(700);return analyzeWithGemini(clip,style,attempt+1)}
+    throw err;
+  }finally{
+    v.pause();v.removeAttribute("src");v.load();v.remove();
   }
-  const data=await response.json();
-  const highlights=Array.isArray(data.highlights)?data.highlights:[];
-  return highlights.map((h:{start?:number;duration?:number;score?:number})=>({
-    clip,
-    start:Math.max(0,Math.min(clip.duration-Math.min(h.duration||3,4.5),Number(h.start)||0)),
-    dur:Math.min(4.5,Math.max(2,Number(h.duration)||3)),
-    score:Math.max(0,Math.min(1,Number(h.score)||0))
-  })).filter((h:Highlight)=>h.dur>0).slice(0,4);
 }
 
 export default function Home(){
@@ -110,20 +121,32 @@ export default function Home(){
    setAnalysis(aiEnabled?"1/4 · Gemini analysiert die wichtigsten Momente …":"1/4 · Szenen werden lokal analysiert …");
    setAiStatus("");
    const all:Highlight[]=[];
-   for(let i=0;i<clips.length;i++){
-     let found:Highlight[]=[];
-     if(aiEnabled){
+   const batchSize=Math.min(3,Math.max(1,clips.length));
+   let analyzed=0;
+   for(let batchStart=0;batchStart<clips.length;batchStart+=batchSize){
+     const batch=clips.slice(batchStart,batchStart+batchSize);
+     const results=await Promise.all(batch.map(async clip=>{
        try{
-         found=await analyzeWithGemini(clips[i],style);
-         setAiStatus("Gemini-KI aktiv · "+(i+1)+"/"+clips.length+" Video analysiert");
-       }catch(err){
-         setAiStatus("Gemini nicht erreichbar · lokaler Fallback aktiv");
-         found=await scoreClip(clips[i],style);
+         if(aiEnabled){
+           const found=await analyzeWithGemini(clip,style);
+           return {found,mode:"Gemini"};
+         }
+         return {found:await scoreClip(clip,style),mode:"Lokal"};
+       }catch{
+         try{return {found:await scoreClip(clip,style),mode:"Fallback"}}
+         catch{return {found:[] as Highlight[],mode:"Übersprungen"}}
        }
-     }else found=await scoreClip(clips[i],style);
-     all.push(...found);
-     setProgress(Math.round(((i+1)/clips.length)*25));
+     }));
+     results.forEach((r,i)=>{
+       all.push(...r.found);
+       analyzed++;
+       const mode=r.mode==="Gemini"?"🤖 Gemini":r.mode==="Fallback"?"🛟 lokaler Fallback":r.mode==="Lokal"?"📱 lokal":"⚠️ übersprungen";
+       setAiStatus(mode+" · Video "+analyzed+" von "+clips.length);
+       setProgress(Math.round((analyzed/clips.length)*25));
+     });
+     if(batchStart+batchSize<clips.length) await wait(150);
    }
+   if(!all.length)throw new Error("Es konnten keine Highlights gefunden werden.");
    all.sort((a,b)=>b.score-a.score); const chosen:Highlight[]=[]; let remaining=target;
    for(const h of all){if(remaining<=0)break;const overlap=chosen.some(x=>x.clip.id===h.clip.id&&Math.abs(x.start-h.start)<h.dur*.8);if(overlap)continue;const dur=Math.min(h.dur,remaining);chosen.push({...h,dur});remaining-=dur}
    if(remaining>0){for(const c of clips){if(remaining<=0)break;const dur=Math.min(remaining,Math.min(3,c.duration));chosen.push({clip:c,start:Math.max(0,(c.duration-dur)/2),dur,score:0});remaining-=dur}}
@@ -172,7 +195,7 @@ export default function Home(){
   <section className="section"><h2>Automatischer Look</h2><div className="chips">{["Auto","Warm","Cool","Vivid","Noir"].map(x=><button className={"chip "+(filter===x?"active":"")} key={x} onClick={()=>setFilter(x)}>{x}</button>)}</div></section>
   <section className="section"><h2>Titel</h2><input className="textInput" value={title} onChange={e=>setTitle(e.target.value)} placeholder="BEST MOMENTS"/><input className="textInput" value={subtitle} onChange={e=>setSubtitle(e.target.value)} placeholder="Videoeditor47 · 2026"/></section>
   <section className="section"><h2>Format</h2><div className="chips">{["9:16","16:9","1:1"].map(x=><button className={"chip "+(ratio===x?"active":"")} key={x} onClick={()=>setRatio(x)}>{x}</button>)}</div></section>
-  <section className="section"><h2>Automatisch bearbeiten</h2><p className="small">Die App erkennt Highlights und kombiniert sie mit stilabhängigen Übergängen, Filtern, Fade-Effekten, Titelkarte und Outro. Die Verarbeitung bleibt lokal.</p><button className="mainBtn" disabled={!clips.length||busy} onClick={render}>{busy?"✨ Dein Edit wird erstellt …":"✨ Automatischen CapCut-Style Edit erstellen"}</button>{busy&&<><p className="small">{analysis}</p>{aiStatus&&<p className="small">{aiStatus}</p>}<div className="progress"><i style={{width:progress+"%"}}/></div></>}
+  <section className="section"><h2>Automatisch bearbeiten</h2><p className="small">Gemini analysiert die Videos in kleinen Gruppen. Bei Fehlern wird automatisch lokal weiteranalysiert, damit einzelne Videos den gesamten Recap nicht stoppen.</p><button className="mainBtn" disabled={!clips.length||busy} onClick={render}>{busy?"✨ Dein Edit wird erstellt …":"✨ Automatischen CapCut-Style Edit erstellen"}</button>{busy&&<><p className="small">{analysis}</p>{aiStatus&&<p className="small">{aiStatus}</p>}<div className="progress"><i style={{width:progress+"%"}}/></div></>}
   </section>
   {result&&<section className="section result"><h2>Fertiger Edit 🎉</h2><video controls playsInline src={result}/><a className="download" href={result} download={"Videoeditor47-Edit.webm"}>⬇️ Fertiges Video speichern</a><p className="small">Analyse und Rendering liefen lokal auf deinem Handy.</p></section>}
   <div className="footer">Videoeditor47 · kein Login · kein Supabase · keine monatlichen Gebühren</div>
