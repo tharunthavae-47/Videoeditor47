@@ -4,11 +4,19 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Clip={id:string;name:string;url:string;duration:number};
 type Highlight={clip:Clip;start:number;dur:number;score:number};
+type TransitionKind="cut"|"dissolve"|"zoom"|"flash";
 
 const styles=["Cinematic","Action","Funny","Emotional","Party","Travel","Fast Cut","Relaxed"];
 const lengths=[1,3,5,10];
 
 function fmt(s:number){if(!Number.isFinite(s))return "0:00";const m=Math.floor(s/60);const sec=Math.floor(s%60).toString().padStart(2,"0");return m+":"+sec}
+
+function transitionFor(style:string, score:number):TransitionKind{
+  if(style==="Cinematic"||style==="Emotional"||style==="Travel")return "dissolve";
+  if(style==="Action"||style==="Fast Cut")return score>.22?"zoom":"cut";
+  if(style==="Party"||style==="Funny")return score>.28?"flash":"zoom";
+  return "dissolve";
+}
 
 async function scoreClip(clip:Clip, style:string):Promise<Highlight[]>{
   const v=document.createElement("video"); v.src=clip.url; v.muted=true; v.playsInline=true; v.preload="auto";
@@ -75,17 +83,28 @@ export default function Home(){
    recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
    const finished=new Promise<void>((resolve,reject)=>{recorder.onstop=()=>resolve();recorder.onerror=()=>reject(new Error("Aufnahme fehlgeschlagen"))});
    recorder.start(250); let doneTime=0;
+   const lastFrame=document.createElement("canvas");lastFrame.width=W;lastFrame.height=H;const lastCtx=lastFrame.getContext("2d");
+   let previous:Highlight|null=null;
    for(let si=0;si<chosen.length;si++){
     const seg=chosen[si],v=document.createElement("video");v.src=seg.clip.url;v.muted=true;v.playsInline=true;v.preload="auto";
     await new Promise<void>((res,rej)=>{v.onloadeddata=()=>res();v.onerror=()=>rej(new Error("Video konnte nicht geladen werden."))});
     await v.play();v.currentTime=seg.start;const start=performance.now();
+    const transition=previous?transitionFor(style,seg.score):"cut"; const transMs=transition==="cut"?0:Math.min(550,seg.dur*260);
     while(performance.now()-start<seg.dur*1000){
-      if(v.readyState>=2){const vw=v.videoWidth||W,vh=v.videoHeight||H,scale=Math.max(W/vw,H/vh),dw=vw*scale,dh=vh*scale;ctx.fillStyle="#000";ctx.fillRect(0,0,W,H);ctx.drawImage(v,(W-dw)/2,(H-dh)/2,dw,dh);
-        const fade=Math.min(1,Math.min((performance.now()-start)/350,(seg.dur*1000-(performance.now()-start))/350));ctx.fillStyle="rgba(0,0,0,"+(1-Math.max(0,fade))*.45+")";ctx.fillRect(0,0,W,H);
+      const elapsed=performance.now()-start;
+      if(v.readyState>=2){const vw=v.videoWidth||W,vh=v.videoHeight||H,scale=Math.max(W/vw,H/vh),dw=vw*scale,dh=vh*scale;ctx.fillStyle="#000";ctx.fillRect(0,0,W,H);
+        const p=transMs?Math.min(1,elapsed/transMs):1;
+        if(previous&&lastCtx&&p<1){ctx.globalAlpha=1-p;ctx.drawImage(lastFrame,0,0,W,H);ctx.globalAlpha=1;}
+        ctx.save();
+        if(transition==="zoom"&&previous&&p<1){const z=1.035-0.035*p;ctx.translate(W/2,H/2);ctx.scale(z,z);ctx.translate(-W/2,-H/2);}
+        ctx.globalAlpha=previous?Math.max(.02,p):1;ctx.drawImage(v,(W-dw)/2,(H-dh)/2,dw,dh);ctx.globalAlpha=1;ctx.restore();
+        if(transition==="flash"&&previous&&p<1){ctx.fillStyle="rgba(255,255,255,"+((1-p)*.28)+")";ctx.fillRect(0,0,W,H);}
+        const edgeFade=Math.min(1,Math.min(elapsed/220,(seg.dur*1000-elapsed)/220));ctx.fillStyle="rgba(0,0,0,"+(1-Math.max(0,edgeFade))*.28+")";ctx.fillRect(0,0,W,H);
         if(style==="Fast Cut"){ctx.fillStyle="#fff";ctx.font="700 22px Arial";ctx.fillText("VIDEOEDITOR47",24,H-30)}
       }
       doneTime+=16;setProgress(40+Math.min(59,Math.round(doneTime/(target*1000)*59)));await new Promise(r=>setTimeout(r,16));
     }
+    if(lastCtx)lastCtx.drawImage(canvas,0,0); previous=seg;
     v.pause();v.remove();
    }
    recorder.stop();await finished;stream.getTracks().forEach(t=>t.stop());setAnalysis("3/3 · Recap fertig!");setProgress(100);
@@ -101,7 +120,7 @@ export default function Home(){
   <section className="section"><h2>Recap-Länge</h2><div className="chips">{lengths.map(x=><button className={"chip "+(length===x?"active":"")} key={x} onClick={()=>setLength(x)}>{x} Min.</button>)}</div></section>
   <section className="section"><h2>Stil</h2><div className="chips">{styles.map(x=><button className={"chip "+(style===x?"active":"")} key={x} onClick={()=>setStyle(x)}>{x}</button>)}</div></section>
   <section className="section"><h2>Format</h2><div className="chips">{["9:16","16:9","1:1"].map(x=><button className={"chip "+(ratio===x?"active":"")} key={x} onClick={()=>setRatio(x)}>{x}</button>)}</div></section>
-  <section className="section"><h2>Recap erstellen</h2><p className="small">Die Analyse läuft direkt auf deinem Handy. Es werden keine Videos hochgeladen. Videoeditor47 bewertet kleine Vorschau-Frames und sucht nach Bewegung, Bildwechseln und passenden Momenten für deinen gewählten Stil.</p><button className="mainBtn" disabled={!clips.length||busy} onClick={render}>{busy?"Recap wird erstellt …":"✨ Automatischen Recap erstellen"}</button>{busy&&<><p className="small">{analysis}</p><div className="progress"><i style={{width:progress+"%"}}/></div></>}</section>
+  <section className="section"><h2>Recap erstellen</h2><p className="small">Die Analyse läuft direkt auf deinem Handy. Es werden keine Videos hochgeladen. Videoeditor47 erkennt Bewegung und Bildwechsel und wählt automatisch passende, stilabhängige Übergänge – von weichen Cinematic-Dissolves bis zu dynamischen Action-Cuts.</p><button className="mainBtn" disabled={!clips.length||busy} onClick={render}>{busy?"Recap wird erstellt …":"✨ Automatischen Recap erstellen"}</button>{busy&&<><p className="small">{analysis}</p><div className="progress"><i style={{width:progress+"%"}}/></div></>}</section>
   {result&&<section className="section result"><h2>Dein Recap ist fertig 🎉</h2><video controls playsInline src={result}/><a className="download" href={result} download={"Videoeditor47-Recap.webm"}>⬇️ Recap auf dem Handy speichern</a><p className="small">Die Verarbeitung war komplett lokal. Deine Originalvideos wurden nicht hochgeladen.</p></section>}
   <div className="footer">Videoeditor47 · keine Anmeldung · kein Supabase · keine monatlichen Gebühren</div>
  </main>
