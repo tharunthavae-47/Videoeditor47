@@ -46,7 +46,7 @@ async function scoreClip(clip:Clip, style:string):Promise<Highlight[]>{
     if(style==="Action"||style==="Fast Cut")styleBonus=motion*.3;
     if(style==="Funny"||style==="Party")styleBonus=Math.min(1,motion*1.5)*.18;
     const score=motion*.62+bright*.2+styleBonus;
-    highlights.push({clip,start:Math.max(0,Math.min(clip.duration-window,f.t-window/2)),dur:window,score});
+    highlights.push({clip,start:Math.max(0,Math.min(clip.duration-segmentWindow,f.t-segmentWindow/2)),dur:segmentWindow,score});
   }
   return highlights.sort((a,b)=>b.score-a.score).slice(0,Math.min(3,highlights.length));
 }
