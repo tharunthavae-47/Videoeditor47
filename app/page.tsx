@@ -154,12 +154,12 @@ export default function Home(){
    setAnalysis("2/4 · Schnitt, Reihenfolge und Übergänge werden geplant …");setProgress(35);
    const vertical=ratio==="9:16",wide=ratio==="16:9";const W=vertical?720:wide?1280:1080,H=vertical?1280:wide?720:1080;
    const canvas=document.createElement("canvas");canvas.width=W;canvas.height=H;const ctx=canvas.getContext("2d");if(!ctx)throw new Error("Canvas nicht verfügbar.");
-   const stream=canvas.captureStream(30);let recorder:MediaRecorder;const chunks:Blob[]=[];try{recorder=new MediaRecorder(stream,{mimeType:"video/webm;codecs=vp9"})}catch{recorder=new MediaRecorder(stream)}
+   const videoStream=canvas.captureStream(30);\n   // Capture the original video audio as well as the rendered canvas. Each source video is routed into the recorder audio stream.\n   const AudioContextClass=window.AudioContext||(window as typeof window & {webkitAudioContext?:typeof AudioContext}).webkitAudioContext;\n   const audioContext=AudioContextClass?new AudioContextClass():null;\n   const audioDestination=audioContext?.createMediaStreamDestination()??null;\n   if(audioContext?.state==="suspended")await audioContext.resume();\n   const stream=new MediaStream([...videoStream.getVideoTracks(),...(audioDestination?.stream.getAudioTracks()??[])]);\n   let recorder:MediaRecorder;const chunks:Blob[]=[];try{recorder=new MediaRecorder(stream,{mimeType:"video/webm;codecs=vp9,opus"})}catch{try{recorder=new MediaRecorder(stream,{mimeType:"video/webm"})}catch{recorder=new MediaRecorder(stream)}}
    recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};const finished=new Promise<void>((resolve,reject)=>{recorder.onstop=()=>resolve();recorder.onerror=()=>reject(new Error("Aufnahme fehlgeschlagen"))});
    recorder.start(250);let doneTime=0;const lastFrame=document.createElement("canvas");lastFrame.width=W;lastFrame.height=H;const lastCtx=lastFrame.getContext("2d");let previous:Highlight|null=null;
    setAnalysis("3/4 · Profi-Look wird gerendert …");
    for(let si=0;si<chosen.length;si++){
-    const seg=chosen[si],v=document.createElement("video");v.src=seg.clip.url;v.muted=true;v.playsInline=true;v.preload="auto";
+    const seg=chosen[si],v=document.createElement("video");v.src=seg.clip.url;v.muted=false;v.playsInline=true;v.preload="auto";\n    const audioSource=audioContext&&audioDestination?audioContext.createMediaElementSource(v):null;\n    if(audioSource&&audioDestination)audioSource.connect(audioDestination);
     await new Promise<void>((res,rej)=>{v.onloadeddata=()=>res();v.onerror=()=>rej(new Error("Video konnte nicht geladen werden."))});
     await v.play();v.currentTime=seg.start;const start=performance.now();const transition=previous?transitionFor(style,seg.score):"cut";const transMs=transition==="cut"?0:Math.min(650,seg.dur*280);
     while(performance.now()-start<seg.dur*1000){
@@ -174,18 +174,18 @@ export default function Home(){
        if(style==="Fast Cut"){ctx.fillStyle="#fff";ctx.font="700 22px Arial";ctx.fillText("VIDEOEDITOR47",24,H-30)}
       } doneTime+=16;setProgress(35+Math.min(60,Math.round(doneTime/(target*1000)*60)));await new Promise(r=>setTimeout(r,16));
     }
-    if(lastCtx)lastCtx.drawImage(canvas,0,0);previous=seg;v.pause();v.remove();
+    if(lastCtx)lastCtx.drawImage(canvas,0,0);previous=seg;v.pause();audioSource?.disconnect();v.remove();
    }
    setAnalysis("4/4 · Titel und Outro werden eingebaut …");setProgress(96);
    // Add a short title card at the end so every export has a polished ending.
    const endV=document.createElement("video");endV.muted=true;endV.playsInline=true;
    const titleFrames=Math.round(30*1.8);for(let i=0;i<titleFrames;i++){ctx.fillStyle="#090b10";ctx.fillRect(0,0,W,H);const p=Math.min(1,i/12,(titleFrames-i)/12);ctx.globalAlpha=p;ctx.fillStyle="#fff";ctx.textAlign="center";ctx.font="700 "+Math.round(Math.min(W,H)*.075)+"px Arial";ctx.fillText(title||"BEST MOMENTS",W/2,H*.47);ctx.font="400 "+Math.round(Math.min(W,H)*.028)+"px Arial";ctx.fillText(subtitle||"Videoeditor47",W/2,H*.55);ctx.globalAlpha=1;ctx.textAlign="left";await new Promise(r=>setTimeout(r,33))}
-   recorder.stop();await finished;stream.getTracks().forEach(t=>t.stop());setAnalysis("Fertig! Dein automatischer Edit ist bereit.");setProgress(100);setResult(URL.createObjectURL(new Blob(chunks,{type:"video/webm"})));
+   recorder.stop();await finished;stream.getTracks().forEach(t=>t.stop());videoStream.getTracks().forEach(t=>t.stop());if(audioContext)await audioContext.close();setAnalysis("Fertig! Dein automatischer Edit ist bereit.");setProgress(100);setResult(URL.createObjectURL(new Blob(chunks,{type:"video/webm"})));
   }catch(err){alert(err instanceof Error?err.message:"Recap fehlgeschlagen.");}finally{setBusy(false)}
  }
  return <main className="app">
-  <div className="top"><div className="logo">Videoeditor47</div><div className="badge">KI-Style · 100% lokal</div></div>
-  <section className="hero"><h1>Dein automatischer Video-Edit.<br/>Wie ein fertiger Recap.</h1><p>Videos rein – Videoeditor47 analysiert Szenen und erstellt automatisch Schnitt, Reihenfolge, Übergänge, Titel und Look. Alles direkt auf deinem Handy.</p>
+  <div className="top"><div className="logo">Videoeditor47</div><div className="badge">KI-Style · Gemini + lokal</div></div>
+  <section className="hero"><h1>Dein automatischer Video-Edit.<br/>Wie ein fertiger Recap.</h1><p>Videos rein – Videoeditor47 analysiert Szenen und erstellt automatisch Schnitt, Reihenfolge, Übergänge, Titel und Look. Die Videos bleiben lokal; für die KI werden nur ausgewählte Einzelbilder an Gemini gesendet. Der Originalton bleibt im fertigen Video erhalten.</p>
    <div className="drop"><strong>{clips.length?clips.length+" Videos ausgewählt":"Noch keine Videos"}</strong><span className="small">Mehrere Videos gleichzeitig auswählen</span><br/><label className="choose">＋ Videos auswählen<input ref={fileRef} className="hidden" type="file" accept="video/*" multiple onChange={addFiles}/></label></div>
   </section>
   {clips.length>0&&<section className="section"><h2>Deine Videos · {fmt(total)} gesamt</h2><div className="videos">{clips.map(c=><div className="videoCard" key={c.id}><button className="remove" onClick={()=>remove(c.id)}>×</button><video src={c.url} muted playsInline preload="metadata"/><div className="videoInfo">{c.name}</div></div>)}</div></section>}
@@ -197,7 +197,7 @@ export default function Home(){
   <section className="section"><h2>Format</h2><div className="chips">{["9:16","16:9","1:1"].map(x=><button className={"chip "+(ratio===x?"active":"")} key={x} onClick={()=>setRatio(x)}>{x}</button>)}</div></section>
   <section className="section"><h2>Automatisch bearbeiten</h2><p className="small">Gemini analysiert die Videos in kleinen Gruppen. Bei Fehlern wird automatisch lokal weiteranalysiert, damit einzelne Videos den gesamten Recap nicht stoppen.</p><button className="mainBtn" disabled={!clips.length||busy} onClick={render}>{busy?"✨ Dein Edit wird erstellt …":"✨ Automatischen CapCut-Style Edit erstellen"}</button>{busy&&<><p className="small">{analysis}</p>{aiStatus&&<p className="small">{aiStatus}</p>}<div className="progress"><i style={{width:progress+"%"}}/></div></>}
   </section>
-  {result&&<section className="section result"><h2>Fertiger Edit 🎉</h2><video controls playsInline src={result}/><a className="download" href={result} download={"Videoeditor47-Edit.webm"}>⬇️ Fertiges Video speichern</a><p className="small">Analyse und Rendering liefen lokal auf deinem Handy.</p></section>}
+  {result&&<section className="section result"><h2>Fertiger Edit 🎉</h2><video controls playsInline src={result}/><a className="download" href={result} download={"Videoeditor47-Edit.webm"}>⬇️ Fertiges Video speichern</a><p className="small">Schnitt und Rendering laufen auf deinem Handy. Der Originalton der ausgewählten Videoclips wird mitgespeichert.</p></section>}
   <div className="footer">Videoeditor47 · kein Login · kein Supabase · keine monatlichen Gebühren</div>
  </main>
 }
